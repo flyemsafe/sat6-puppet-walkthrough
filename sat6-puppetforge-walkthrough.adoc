@@ -9,15 +9,23 @@ Rodrique Heron <rheron@redhat.com>
 
 This guide walks through getting started with Puppet Forge modules and Satellite 6. The end result is understanding how to write a Puppet module that takes full advantage of Puppet's smart variales and smart parameter class.
 
-== Introduction
+== Introduction to Puppet
 
 Puppet is a configuration management and automation tool that describes host system resources and state using Puppet’s declarative language. The data and code that describes host system resources and state are bundled into a module. This module then exposes named blocks of code referred to as classes that can be applied to a host system. Modules are shared and hosted on the Puppet Forge website.
 
 Satellite 6 provides a single pane for applying Puppet’s classes to host systems and values for attributes defined in a Puppet class can be separated from Puppet’s code, and stored in Satellite 6. In Puppet, this mechanism is referred to as an External Nodes Classifier (ENC). Satellite 6 is ENC that allows you to provide class declarations, parameters and variables to Puppet.
 
+=== Puppet Forge
+
+Puppet Forge is a repository of modules written by Puppet's community that is available for download and use with Satellite 6. It’s best to recognized that modules on Puppet Forge are meant to be used as libraries.
+
+For the most part modules on Puppet Forge will work with Satellite 6. However, it's best to choose puppet are compatible with RedHat base distro and Puppet version 3.6.x.
+
+image::images/puppet-forge.png[Puppet Forge Filter]
+
 === Puppet Basics
 
-It’s best to recognized that modules on Puppet Forge are meant to be used as libraries. Getting into the weeds of Puppet is outside the scope of this guide, however here are some key concepts to understand before we continue. For this exercise I’ll use code from `halyard/sudoers` module.
+Getting into the weeds of Puppet is outside the scope of this guide, however here are some key concepts to understand before we continue. For this exercise I’ll use code from `halyard/sudoers` module.
 
 ==== Resource Types and Attributes
 
