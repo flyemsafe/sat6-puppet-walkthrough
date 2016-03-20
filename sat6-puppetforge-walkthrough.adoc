@@ -25,7 +25,7 @@ image::images/puppet-forge.png[Puppet Forge Filter]
 
 === Puppet Basics
 
-Getting into the weeds of Puppet is outside the scope of this guide, however here are some key concepts to understand before we continue. For this exercise I’ll use code from `halyard/sudoers` module.
+Getting into the weeds of Puppet is outside the scope of this guide, however here are some key concepts to understand before we continue. For this exercise I’ll use code from `halyard/sudoers` puppet module.
 
 ==== Resource Types and Attributes
 
@@ -44,61 +44,81 @@ sudoers::allowed_command{ "acme":            # <1> <2>
 <2> `acme` is called the resource title, which results in the name of the sudoers file created: `/etc/sudoers.d/acme`
 <3> `command, user, require_password, comment` are all attributes, that accepts a value
 
-[NOTE]
-====
-Additional information about `halyard/sudoers`
-
-This is a good example of a module that’s intended to be used as a library. Although this module consist of a class named `“sudoers”`, it does not expose any of it’s attributes. This means you cannot just add it to Satellite and start using it.
-
-* The resource type `sudoers::allowed_command` is special, it’s known as a defined resource type.
-* Although not documented, by `default sudoers::allowed_command` requires the resource type user. We will disable this using the attribute `require_exist`.
-====
-
-=== Classes
-
-Classes are just blocks of code with an name, i.e. named blocks. To use the resource type `sudoers::allowed_command` with Satellite 6, we must define it in a class.  This definition requires the keyword class followed by the name of the class, then opening curly brace, resource type, and finally closing curly brace.
-
-[source,ruby]
-class foo_sudo {
-  sudoers::allowed_command{ "acme":
-    command          => "/usr/sbin/service",
-    user             => "acme",
-    require_password => false,
-    require_exist    => false,
-    comment          => "Allows access to the service command for the acme user"
-  }
-}
-
-=== Manifest
+==== Manifest
 
 All puppet code lives in a file called a manifest with the `.pp` extension.
 
+Let's create a manifest to manage a `user` resource type. We can quickly generate the code for this using the `puppet resource type title` command.
+
+. Generate code to create a user name john.joe
 [source,bash]
-$ cat foo_sudo.pp
-class foo_sudo {
-  sudoers::allowed_command{ "acme":
+$ puppet resource user john.doe
+user { 'john.doe':
+  ensure => 'absent',
+}
++
+. Create a manifest called `user.pp` with the above code and change the attribute `ensure` from absent to present.
+[source,bash]
+$ cat user.pp
+user { 'john.doe':
+  ensure => 'present',
+}
++
+. Now lets apply this resource
+[source,bash]
+puppet apply user.pp
+Notice: Compiled catalog for test-001.example.com in environment production in 0.14 seconds
+Notice: /Stage[main]/Main/User[john.doe]/ensure: created
+Notice: Finished catalog run in 0.14 seconds
++
+. Now we can confirm the user was created
++
+[source.bash]
+----
+$ id john.doe
+uid=1000(john.doe) gid=1000(john.doe) groups=1000(john.doe)
+
+$ grep john.doe /etc/passwd
+john.doe:x:1000:1000::/home/john.doe:/bin/bash
+----
+
+==== Classes
+
+Classes are just blocks of code with an name, i.e. named blocks.
+
+Let's pick up from where we last left off with `halyard/sudoers` module. To use the resource type `sudoers::allowed_command` provided by this module with Satellite 6, we must define it in a class.
+
+[source,ruby]
+----
+class foo_sudo {                            <1>
+  sudoers::allowed_command { "acme":        <2>
     command          => "/usr/sbin/service",
     user             => "acme",
     require_password => false,
     require_exist    => false,
     comment          => "Allows access to the service command for the acme user"
   }
-}
+}                                           <3>
+----
 
+<1> This definition requires the keyword `class` followed by the name of the class `food_sudo` and opening curly braces
+<2> The resource type `sudoers::allowed_command`
+<3> Finally closing curly brace
 
-=== Module
+==== Module
 
 A Puppet module bundles puppet manifest, along with other data in a specific directory structure. Just like RPMs, modules are the only way to store puppet code in Satellite 6.
 
 The below command is how we create a module.
 
 [source,bash]
-$ puppet module generate acme-foo_sudoers --skip-interview
+----
+$ puppet module generate acme-foo_sudoers --skip-interview  # <1>
 Notice: Generating module at /tmp/foo_sudoers...
 Notice: Populating templates...
 Finished; module generated in foo_sudoers.
 foo_sudoers/README.md
-foo_sudoers/metadata.json                # <1>
+foo_sudoers/metadata.json                                  # <2>
 foo_sudoers/Rakefile
 foo_sudoers/tests
 foo_sudoers/tests/init.pp
@@ -106,15 +126,16 @@ foo_sudoers/spec
 foo_sudoers/spec/spec_helper.rb
 foo_sudoers/spec/classes
 foo_sudoers/spec/classes/init_spec.rb
-foo_sudoers/manifests                    # <2>
-foo_sudoers/manifests/init.pp            # <3>
+foo_sudoers/manifests                                     # <3>
+foo_sudoers/manifests/init.pp                             # <4>
 foo_sudoers/Gemfile
-
+----
 The key details about the above output are:
-
-<1> The `metadata.json` file is required. Each time your module change, bump the version number by editing this file.
-<2> All your puppet manifest lives in this directory.
-<3> It's common practice to always include a `init.pp` with your module.
++
+<1> Puppet recommends generating modules prefix with your username.
+<2> The `metadata.json` file is required. Each time your module change, bump the version number by editing this file.
+<3> All your puppet manifest lives in this directory.
+<4> It's common practice to always include a `init.pp` with your module.
 
 [NOTE]
 ====
@@ -123,11 +144,73 @@ As per Puppetlabs documentation, `init.pp` is special and always contains a clas
 Although not required, it is common practice to always create a `init.pp`. Basically, classes in `init.pp` gets executed by default if no other class is declared.
 ====
 
-=== Adding Puppet Forge Modules to Satellite 6
+== Our First Puppet Module
 
-For this we need to create a custom product with a repository of the type puppet to store our custom puppet modules.
+Let's create our first Puppet module using the basic Puppet knowledge we have so far. Recommend practices for setting your Puppet development area is outside the scope of the guide. For this example, I'm using a RHEL system that's registered to Satellite 6.
 
-==== Create a custom product
+. Create a module template
+[source,bash]
+$ puppet module generate acme-foo_sudoers --skip-interview
++
+. Add this code to `acme-foo_sudoers/manifests/init.pp` replacing the existing code
+[source,ruby]
+cat > acme-foo_sudoers/manifests/init.pp <<EOF
+class foo_sudoers {
+  sudoers::allowed_command { "acme":
+    command          => "/usr/sbin/service",
+    user             => "acme",
+    require_password => false,
+    require_exist    => false,
+    comment          => "Allows access to the service command for the acme user"
+  }
+}
+EOF
++
+. Simple Puppet code validation
+[source,bash]
+$ puppet parser validate acme-foo_sudoers/manifests/init.pp
++
+. We can also apply this module locally to ensure it's working. First we need to download the `halyard/sudoers` module which contains all the pluming we need. This step assumes your workstation as direct access to the Internet. We installing the module to `/root/development`.
+[source,bash]
+$ puppet module install halyard/sudoers --target-dir /root/development/
++
+. Next rename our module from acme-foo_sudoers to foo_sudoers
+[source,bash]
+$ mv acme-foo_sudoers foo_sudoers
++
+. Now lets apply the foo_sudoers class locally.
+[source,bash]
+$puppet apply --modulepath=. -e "include foo_sudoers"  # <1>
+Notice: Compiled catalog for test-001.example.com in environment production in 0.21 seconds                                           # <2>
+Notice: /Stage[main]/Sudoers/File[/etc/sudoers.d]/mode: mode changed '0750' to '0770'                                                 # <3>
+Notice: /Stage[main]/Foo_sudoers/Sudoers::Allowed_command[acme]/File[/etc/sudoers.d/acme]/ensure: defined content as '{md5}a37d9a3bc7fe83ea5da53e0194d23df4' # <4>
+Notice: Finished catalog run in 0.21 seconds # <5>
++
+<1> `--modulepath`, both modules live in the current directory, `-e "include foo_sudoers"` means we are applying the class `foo_sudoers`
+<2> Puppet manifest are complied into a https://docs.puppetlabs.com/puppet/4.3/reference/subsystem_catalog_compilation.html[catalog], which are then applied.
+<3> Permissions for `/etc/sudoers.d` was changed to `0770`
+<4> /etc/sudoers.d/acme created with rule define by our puppet class
+<5> How long it took to apply the catalog
++
+. Verify sudoers was created for user `acme`
+[source,bash]
+$ cat /etc/sudoers.d/acme
+# Allows access to the service command for the acme user
+acme ALL=(root) NOPASSWD: /usr/sbin/service
++
+. Build the puppet module
+[source,bash]
+$ puppet module build foo_sudoers
+Notice: Building /root/development/foo_sudoers for release
+Module built: /root/development/foo_sudoers/pkg/acme-foo_sudoers-0.1.0.tar.gz
+
+This last step produces `acme-foo_sudoers-0.1.0.tar.gz` which how Satellite 6 accepts manually uploaded Puppet modules.
+
+==== Add Puppet Modules To Satellite 6
+
+Before we can upload `acme-foo_sudoers-0.1.0.tar.gz` module to Satellite, we need to create a custom product to store our custom puppet modules, along with Puppet Forge modules.
+
+===== Create a Custom Puppet Product
 
 . Log into your Satellite instance
 +
@@ -144,42 +227,112 @@ image::images/sat-new-product-acme.png[Add new product]
 . Ensure product `ACME Puppet Modules` > `Repositories` is selected and click `Create Repository`
 +
 image::images/select-product.png[Product selected]
-. Enter a `Name` for your repo, for this guide we will use `ACME Puppet Modules Repo` and ensure `Type` is set to `puppet` and click `Save`
+. Enter a `Name` for your repo, for this guide we will use `Puppet Forge Repo` and ensure `Type` is set to `puppet`, `URL` set to `http://forge.puppetlabs.com`, then click `Save`
 +
-image::images/create-puppet-repo.png[Puppet create repo]
+image::images/create-puppet-repo.png[Puppet Forge repo]
++
+. Sync the repository, click the check box next to `Puppet Forge Repo`, then click `Sync Now`
++
+image::images/sync-puppet-repo.png[Puppet Forge repo sync]
++
+. Finally, let's create another repo to store our custom puppet modules. Enter a `Name` for your repo, for this guide we will use `ACME Puppet Modules Repo` and ensure `Type` is set to `puppet` and click `Save`
 
-==== Add Puppet Module to Custom Product Repository
+===== Add Puppet Module to Custom Product Repository
 
+====== From the WebUI
 . Naviagte to `Content` > `Products`, select `ACME Puppet Modules`, under `Repositories`, select `ACME Puppet Modules Repo`
 +
 . Under the heading `Upload Puppet Module`, select `Choose Files`, then `Upload` to add our custom puppet module to Satellite.
 +
 image::images/upload-puppet-module.png[upload puppet module]
 
-
+====== Using hammer cli Tool
+. Install and setup hammer config, edit the config to match your environment.
+[source,bash]
+$ yum -y install rubygem-hammer_cli_katello rubygem-hammer_cli
+$ mkdir /root/.hammer/
+$ cat > /root/.hammer/cli_config.yml <<EOF
+:foreman:
+    :host: 'https://server.example.com/'
+    :username: 'username'
+    :password: 'password'
+EOF
++
+. Get ACME Puppet Repository ID
+[source,bash]
+$ hammer repository list --organization ACME --search 'name ~ "Puppet Forge Repo"'
+---|-------------------------|--------------------|------------|------
+ID | NAME                    | PRODUCT            |CONTENT TYPE| URL
+---|-------------------------|--------------------|------------|------
+9  | ACME Puppet Modules Repo| ACME Puppet Modules|  puppet    |
+---|-------------------------|--------------------|------------|------
++
+. Upload module
+[source,bash]
+$ hammer repository upload-content --id 9 --path=foo_sudoers/pkg/acme-foo_sudoers-0.1.0.tar.gz
+Successfully uploaded file 'acme-foo_sudoers-0.1.0.tar.gz'.
 
 ==== Add Puppet Module To Content View
 
-. navigate to Content -> Content Views -> “your content view” -> Puppet Modules -> Add New Modules, and type foo in Filter search box.
-+
-. Click “Select a Version” then select the lastest version.
-+
-. Next, we publish then promote new version to a life cycle environment.
+This assumes you already have a Content View and Life Cycle Environments setup. For this guide, we are using a Content View name `cv-os-rhel-7Server`.
 
-==== Apply Puppet Classes to Host
-. Navigate to the Hosts menu and select your host, then Edit, on this page ensure you have the correct “Content View” selected, along with the “Puppet CA” and “Puppet Master”.
+. Navigate to Content -> Content Views -> `cv-os-rhel-7Server` -> Puppet Modules
++
+image::images/add-puppet-module-cv.png[cv-puppet-module]
++
+. Click `Add New Module`, and type foo in Filter search box
++
+. Click “Select a Version” then select the latest version.
++
+image::images/add-puppet-latest.png[select puppet version]
++
+. Repeat the above steps to add `sudoers` module, chose the lastest by `halyard`
++
+. Finally, publish then promote new version to a life cycle environment.
+
+===== Example hammer command publish > promote to Development
+. Get content view id
+[source,bash]
+$ hammer --csv content-view list --organization ACME --search 'name ~ cv-os-rhel-7Server'
+Content View ID,Name,Label,Composite,Repository IDs
+3,cv-os-rhel-7Server,cv-os-rhel-7Server,,"4, 1, 2, 6"
++
+. Publish content view
+[source,bash]
+$ hammer content-view publish --organization ACME --name cv-os-rhel-7Server --description 'Added foo_sudoers'
+[..........................................................] [100%]
++
+. Get latest version of `cv-os-rhel-7Server` from Environment Library
+[source,bash]
+$ hammer --csv content-view version list --content-view-id 3 --environment Library --organization ACME
+ID,Name,Version,Lifecycle Environments
+4,cv-os-rhel-7Server 2.0,2.0,Library
++
+. Promote version `2.0` of `cv-os-rhel-7Server` to Development
+[source,bash]
+$ hammer content-view version promote --content-view-id 3 --to-lifecycle-environment Development --id 4 --async --organization ACME
+Content view is being promoted with task c5feb6f5-28e5-4171-89bf-04271208d942
++
+. Monitor status, grabbing the task number from the last output `c5feb6f5-28e5-4171-89bf-04271208d942`
+[source,bash]
+$ hammer task progress --id c5feb6f5-28e5-4171-89bf-04271208d942
+
+=== Associating a Puppet Class with a Host
+
+First, remove `/etc/sudoers.d/acme` from your client host. My client that registered to Satellite is name`test-001.example.com`.
+
+. Navigate to `Hosts` > `All hosts`
++
+. Click `Edit` to the right of your host, on this page ensure you have the correct `Content View`, `Puppet CA` and `Puppet Master` selected.
 +
 . Next click on “Puppet Classes”, then under “Available Classes”, click the + next “foo_sudoers”. This will expand, then click the plus to the right of “foo_sudoers”. Now the the class will show up under “Included Classes”.
++
+image::images/add-class-to-host.png[add class to host]
 
 [TIP]
 The better approach is to apply classes via Hostgroups or Config groups, We will explore this later on.
 
-==== Verify Class was applied
-
-[source,bash]
-GUID=
-DOKEOS_USER=
-ssh ${DOKEOS_USER}@sat-$GUID.rhpds.opentlc.com
+==== Run Puppet Agent
 
 . ssh to your satellite client
 +
@@ -190,13 +343,27 @@ $ puppet agent -t
 . Verify sudoers file was created
 
 [source,bash]
-ls -l /etc/sudoers.d/acme
+$ ll /etc/sudoers.d/acme
+-r--r-----. 1 root root 103 Mar 19 23:51 /etc/sudoers.d/acme
 
-==== Summary
+==== Our First Puppet Module Summary
 
-We use a Puppet Forge from module to create a sudoers file for user `ACME`, which is cool. However, we need to separate our configuration data from the code in order to take full advantage of Satellite's implementation of Puppet.
+We use wrote a Puppet module using to create a sudoers file for user `ACME` using `halyard/sudoers` from Puppet Forge as a library. We could not have just selected `halyard/sudoers` module, add to our content view, publish, promote, associate with a host. The reason, for this particular module is that it's resource type `sudoers::allowed_command` is called a https://docs.puppetlabs.com/puppet/latest/reference/lang_defined_types.html[defined] type. Not all modules on Puppet Forge are like this, some modules can be used directly with Satellite 6 with wrapping them in your own module. By the end of this guide you should be able to figure out how to use any Puppet Forge module with Satellite 6.
 
-Whether you are developing a puppet code from sracth or simple using a module for Puppet Forge. You will need to ensure you can access the attribute values of the classes in your module, without touching your puppet code.
+[NOTE]
+====
+Additional information about `halyard/sudoers`
+
+This is a good example of a module that’s intended to be used as a library. Although this module consist of a class named `“sudoers”`, it does not expose any of it’s attributes. This means you cannot just add it to Satellite and start using it.
+
+* The resource type `sudoers::allowed_command` is special, it’s known as a defined resource type.
+* Although not documented, by `default sudoers::allowed_command` requires the resource type user. We will disable this using the attribute `require_exist`.
+====
+
+
+ However, we need to separate our configuration data from the code in order to take full advantage of Satellite's implementation of Puppet.
+
+Whether you are developing a puppet code from scratch or simple using a module for Puppet Forge. You will need to ensure you can access the attribute values of the classes in your module, without touching your puppet code.
 
 Let's revist our puppet class:
 
@@ -214,26 +381,15 @@ class foo_sudo {
 If we need to give another user access to `/usr/sbin/service`, we don't want to edit the above code to change `acme` to a different user. Instead we want to make this change via Satellite 6 WEBUI. To accomplish this your puppet classes should expose their attributes values outside of the code. We refer to attribute values that are expose as parameters. Satellite 6 support two implementation of this, a simple approach referred to as Smart Variables in Satellite 6. Then there's the recommended approach known in the puppet community as parameterized classes and in Satellite 6 as Smart Class Parameter. We will get into this later on, for now lets create our first puppet module without either implementation.
 
 
-=== Create a Puppet Module
-
-The steps are the same as before for createing a Puppet Forge product, only this time we will create a product to store our custom Puppet modules.
-
-==== Create Custom Product
-==== Generate a puppet module
-==== Upload module to custom product
-==== Assosiate with a content view
-==== Publish Promote
-==== Assosiate classes with a host
-==== Run puppet on host
-==== Summary
 
 Same results as before, but now we've wrapped the `sudoers` class into our own class `foo_sudoers`. Now we can begin to parameterize the attributes.
 
-=== Separating configuration data from code
+== Separating configuration data from code
 
 Now that we understand what a class is. We need to ensure when we write classes we are separating the configuration data from the code. This will allow us to change sudoers::allowed_command attributes value via Satellite UI vs rebuilding our module every time we need to change the value of an attribute.
 
-==== Satellite 6 Smart Variables
+=== Satellite Parameters
+=== Satellite 6 Smart Variables
 Changing attribute values is done via Satellite 6  Smart Variables. We do this by making each attribute value a variable.
 
 [source,ruby]
@@ -262,7 +418,7 @@ class foo_sudo {
 +
 . Test puppet client
 
-==== Satellite 6 Smart Class Parameter
+=== Satellite 6 Smart Class Parameter
 With a smart variable, you still have to look at the code to figure out what variables are available. Instead, what you should want is for Satellite to tell you what variables are available, this is what’s called a Smart Class Parameter in Satellite 6 and known as parameterized class in Puppet. A smart class expects to find attributes defined in a dedicated class.
 
 [source,ruby]
