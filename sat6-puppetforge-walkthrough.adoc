@@ -350,25 +350,14 @@ $ ll /etc/sudoers.d/acme
 
 We use wrote a Puppet module using to create a sudoers file for user `ACME` using `halyard/sudoers` from Puppet Forge as a library. We could not have just selected `halyard/sudoers` module, add to our content view, publish, promote, associate with a host. The reason, for this particular module is that it's resource type `sudoers::allowed_command` is called a https://docs.puppetlabs.com/puppet/latest/reference/lang_defined_types.html[defined] type. Not all modules on Puppet Forge are like this, some modules can be used directly with Satellite 6 with wrapping them in your own module. By the end of this guide you should be able to figure out how to use any Puppet Forge module with Satellite 6.
 
-[NOTE]
-====
-Additional information about `halyard/sudoers`
+== Separating configuration data from code
 
-This is a good example of a module that’s intended to be used as a library. Although this module consist of a class named `“sudoers”`, it does not expose any of it’s attributes. This means you cannot just add it to Satellite and start using it.
-
-* The resource type `sudoers::allowed_command` is special, it’s known as a defined resource type.
-* Although not documented, by `default sudoers::allowed_command` requires the resource type user. We will disable this using the attribute `require_exist`.
-====
-
-
- However, we need to separate our configuration data from the code in order to take full advantage of Satellite's implementation of Puppet.
-
-Whether you are developing a puppet code from scratch or simple using a module for Puppet Forge. You will need to ensure you can access the attribute values of the classes in your module, without touching your puppet code.
+When developing a puppet modules for use with Satellite 6, you will need to ensure you can access the attribute values of the classes in your module, without touching your puppet code.
 
 Let's revist our puppet class:
 
 [source,ruby]
-class foo_sudo {
+class foo_sudoers {
   sudoers::allowed_command{ "acme":
     command          => "/usr/sbin/service",
     user             => "acme",
@@ -378,20 +367,50 @@ class foo_sudo {
   }
 }
 
-If we need to give another user access to `/usr/sbin/service`, we don't want to edit the above code to change `acme` to a different user. Instead we want to make this change via Satellite 6 WEBUI. To accomplish this your puppet classes should expose their attributes values outside of the code. We refer to attribute values that are expose as parameters. Satellite 6 support two implementation of this, a simple approach referred to as Smart Variables in Satellite 6. Then there's the recommended approach known in the puppet community as parameterized classes and in Satellite 6 as Smart Class Parameter. We will get into this later on, for now lets create our first puppet module without either implementation.
+The attributes values are included with the class. This would require us to build, upload, update content view, publish then promote content view each time we want to change the values of `foo_sudoers` class.
 
+=== Satellite 6 Parameters
 
+From this point on, attribute values or variables will be referred to as parameters.
+[NOTE]
+====
+A parameter is a special kind of variable in computer programming language that is used to pass information between functions or procedures. The actual information passed is called an argument.
+- Definition from https://www.techopedia.com/definition/3725/parameter-param[Techopedia]
+====
 
-Same results as before, but now we've wrapped the `sudoers` class into our own class `foo_sudoers`. Now we can begin to parameterize the attributes.
+*Satellite 6 presents two personas when it comes to parameters:*
 
-== Separating configuration data from code
+. Parameters that are available to Puppet and other components such as Satellite 6 template types. These parameters can be defined in the following areas.
++
+image::images/parameters-precedence.png[parameter precedence]
++
+The order of precedence is Host parameter always wins.
++
+- Image from https://access.redhat.com/articles/1585273[2015 - 10 Steps to Build an SOE]
++
+. Parameters that are available to Puppet only. These are primarily defined under `Configure` > `Puppet Classes`.
++
+- *Smart Variables*
++
+Essentially any Puppet parameter can be represented as a Satellite 6 Smart Variable. This allows for changing a Puppet parameter value from Satellite 6 UI.
++
+- *Smart Class Parameter*
++
+Similar to `Smart Variables`, the difference is `Smart Variables` require you to redefine your Puppet parameters within Satellite 6 and `Smart Class Parameter`  does not. `Smart Class Parameter` requires you to write Puppet classes that permits detecting, importing, and supplying parameters to Satellite 6. This type of class is called a parameterized class.
 
-Now that we understand what a class is. We need to ensure when we write classes we are separating the configuration data from the code. This will allow us to change sudoers::allowed_command attributes value via Satellite UI vs rebuilding our module every time we need to change the value of an attribute.
+*Three major difference between the personas are:*
 
-=== Satellite Parameters
+. Smart Variables and Smart Class Parameter overrides can be done at the hostgroup and host level.
++
+. Overrides for the other parameters can only be done at the host level. Overrides allows specifying a different value for a class parameter at the hostgroup or host level.
++
+. Smart Variables and Smart Class Parameter can be applied base on rules, for example. User `acme` is allowed to execute `/usr/sbin/service` via sudoers only in the Dev environment, while user `bob` have access in QA and Prod.
+
 === Satellite 6 Smart Variables
-Changing attribute values is done via Satellite 6  Smart Variables. We do this by making each attribute value a variable.
 
+Smart variables are a stepping stone to to Smart Class Parameters. To make our puppet class compatible with Smart Variables we need to change all the hard coded parameter values into variables.
+
+Change all the parameter values into variables
 [source,ruby]
 class foo_sudo {
   sudoers::allowed_command{ $sudoers_title:
@@ -399,27 +418,75 @@ class foo_sudo {
     user             => $sudoers_user,
     require_password => $sudoers_password,
     require_exist    => $sudoers_require_user,
-    comment          => $comment
+    comment          => $sudoers_comment
   }
 }
 
-===== Upload and Test
-. Edit init.pp
+Next we need to add all six parameter variables to Satellite 6. Start by going to:
+
+. Configure > Puppet Classes
++
+. Type `foo_sudoers` in the search box
++
+. Select the `foo_sudoers` class
++
+. Then select the `Smart Variables` tab
++
+. Click `Add Variable`, fill out the following:
++
+- Parameter = sudoers_title
+- Description = username to modify
+- Parameter type = string
+- Default value = acme
++
+image::images/smart-variables.png[create smart variable]
++
+. Repeat until all 6 parameters are created. Remember to set the correct Parameter type of boolean for `sudoers_require_user` and `sudoers_password`.
++
+. Finally click Submit, which take you back to the Puppet classes listing
++
+. Select foo_sudoers again, and it should resemble this.
++
+image::images/smart-variables-fn.png[smart variables final]
+
+[NOTE]
+====
+This highlights a major difference between *Smart Variables* and *Smart Class Parameters*. At some point you will have to decide where you want to spend your time creating puppet parameters. Adding the 6 parameters from our Puppet class wasn't so bad, but imagine doing this for a 1000 classes.
+
+Smart Class Parameters requires you to write your puppet code with parameterized classes. The end result is Satellite will always be populated with all the parameters available from your Puppet code. Leaving with only the task of populating the values for each parameter.
+====
+
+==== Upload and Test
+. Increment the version number by editing *metadata.json*
++
+[source,bash]
+$ sed -i 's/0.1.0/0.1.1/' foo_sudoers/metadata.json
 +
 . Increment the version number
 +
 . Build the module
 +
-. Up load the module
+. Up load the module Satellite 6
 +
-. Select the new version
+. Add new version to Content view
 +
-. Promote
+. Publish Content view with foo_sudoers module
 +
-. Test puppet client
+. Promote Content view
++
+. Test puppet client, you can change the values and run `puppet agent -t` to observe the changes.
 
 === Satellite 6 Smart Class Parameter
-With a smart variable, you still have to look at the code to figure out what variables are available. Instead, what you should want is for Satellite to tell you what variables are available, this is what’s called a Smart Class Parameter in Satellite 6 and known as parameterized class in Puppet. A smart class expects to find attributes defined in a dedicated class.
+
+If I were to hand off foo_sudoers module to a person on my team setting up Satellite 6. I would have to also take the time to document all the parameters that needs to be created via Satellite 6 Smart variable. Otherwise, the person receiving the hand off would have to look at the Puppet code to figure out what parameters are available.
+
+Instead, what you should want is for Satellite to tell you what variables are available, this is what’s called a Smart Class Parameter in Satellite 6 and known as parameterized class in Puppet.
+
+[NOTE]
+====
+Parameterized class support permits detecting, importing, and supplying parameters direct to classes which support it, via the ENC. This requires Puppet 2.6.5 or higher.
+====
+
 
 [source,ruby]
 class foo_sudoers (
@@ -475,7 +542,96 @@ class foo_sudoers(
   }
 }
 
-==== Summary
+=== Smart varaibels and Smart Parameter Info
+
+. Puppet Environments / Parameter
++
+- These can’t be edited, they’re just for information.
++
+. Description
+- Purely information textbox for making notes in. Not passed to Puppet, or reused anywhere else
++
+. Override (important)
+- If this is unchecked, Foreman will not attempt to control this variable, and it will not be passed to Puppet via the ENC.
++
+. Key type
++
+- The type of data we want to pass. Most commonly a string, but many other data types are supported. There’s no easy way to tell what type of data Puppet is expecting, so you will need to read through the code/documentation that comes with a particular module to find out. Changing the type field requires an appropriately set “Default Value” field.
++
+. Default Value
++
+- This will be imported from Puppet initially, but if Puppet is using any class inheritance, you’ll get something unhelpful like “${$foreman::params::user}”. This is because Foreman won’t follow the inheritance, so you’ll need to set a sensible default value
+
+Default value
+
+Most importantly, the Override option has to be enabled for Foreman to control this variable, otherwise it will never be managed and will not appear in the ENC output.
+
+The Default value will be supplied in the ENC output and should be a supported value, such as a string, YAML or JSON structure or use template features (see following sections). When the Use Puppet default checkbox is enabled, no default value will be present in the ENC output unless an override matches. Puppet will instead use the class default or data binding (Hiera) as usual.
+
+The default will be imported from the Puppet manifest initially, but if the class uses an inherited params pattern, it may contain an unhelpful string such as ${$foreman::params::user}. Foreman is unable to parse the actual value in this case as it might change when evaluated. Change the suggested default to the actual value, or tick the Use Puppet default checkbox.
+
+=== Using Smart variables and Smart Parameter Matchers
+
+Suppose I have three users, the owner for Dev = bob, QA = bill and Prod = jim. I want to ensure only the environment owner can execute `/usr/sbin/service`. We can setup a Matcher.
+
+
+Setting up matchers
+
+We’ve configured the default, but that’s not very useful. We need to be able to override the default for hosts or groups of hosts. To do that we need the “Override Value For Specific Hosts” section at the bottom of the page.
+
+Let’s say that any machine in the “development” Puppet environment should use a value of “foremandev” instead of “foreman” for the “user” parameter. Add “environment” to the end of the matchers list, then click the “New Matcher-Value” button, and fill it out like this:
+
+4.2.6 Smart Matchers
+The same smart matching technology underpins both smart variables and smart class parameters, so is described below. It provides the following features for each parameter:
+
+. A default value that can be sent if no specific match is found.
++
+. An order of precendence for overrides, based on host attributes or facts.
++
+. A list of overrides (matchers).
++
+. Specifying a data type, allowing strings, integers and data structures to be passed natively to Puppet.
++
+. Optional validation of values.
++
+. Template processing of values for dynamic content.
+
+
+Ordering
+
+Overrides are processed in the order of precedence set in the Order field, from most to least specific (first match wins, unless merging is enabled). This is a list of host attributes and fact names that overrides will be checked against. If no override from this list matches, the default value is used.
+
+Example attributes that may be listed are:
+
+. fqdn - host’s FQDN (“host.example.com”)
+. hostgroup - full name of the host group, including parents (“Europe/Web servers”)
+. os - name and version of operating system (“RedHat 6.4”)
+. domain - host’s domain name (“example.com”)
+. location or organization - full name of the location/organization, including parents (“Company/Subsidiary”)
+. is_virtual - a fact supplied by Facter
+
+Merging overrides
+
+When the data type is a hash or array, ticking Merge overrides will cause values from every override that matches (e.g. an FQDN and domain) to be merged together.
+
+Merging is “deep”, so nested hashes and arrays will gain values rather than being overwritten entirely.
+
+The Merge default option adds the default value as one of the values to merge, it will get the least important priority so one of the other values may overwrite it.
+
+When the data type is an array, the Avoid duplicates option will de-duplicate the resulting array.
+
+Match: environment = Development
+value: bob
+
+Match: environment = QQ
+value: bill
+
+Match: environment = Production
+value: jim
+
+Simple put, Matchers are a way to central do overrides. If I only had three host, one per environment. I could set a default value for `sudoers_user` *Smart Variable*, then override the value at the host level. In the end, doing it this way still creates a override.
+
+=== Summary
 What’s going on here, we are still defining parameters inside parentheses, the difference is we reference the params class for the values. Next addition is the “inherits” keyword, which simple exposes attributes from one class to another. Now foo_sudoers will have access to all the variable values defined in the params class.
 
   .Explanation
