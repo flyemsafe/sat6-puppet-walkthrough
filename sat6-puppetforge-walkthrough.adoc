@@ -90,7 +90,7 @@ Let's pick up from where we last left off with `halyard/sudoers` module. To use 
 
 [source,ruby]
 ----
-class foo_sudo {                            <1>
+class foo_sudoers {                            <1>
   sudoers::allowed_command { "acme":        <2>
     command          => "/usr/sbin/service",
     user             => "acme",
@@ -346,7 +346,7 @@ $ puppet agent -t
 $ ll /etc/sudoers.d/acme
 -r--r-----. 1 root root 103 Mar 19 23:51 /etc/sudoers.d/acme
 
-==== Our First Puppet Module Summary
+=== Summary
 
 We use wrote a Puppet module using to create a sudoers file for user `ACME` using `halyard/sudoers` from Puppet Forge as a library. We could not have just selected `halyard/sudoers` module, add to our content view, publish, promote, associate with a host. The reason, for this particular module is that it's resource type `sudoers::allowed_command` is called a https://docs.puppetlabs.com/puppet/latest/reference/lang_defined_types.html[defined] type. Not all modules on Puppet Forge are like this, some modules can be used directly with Satellite 6 with wrapping them in your own module. By the end of this guide you should be able to figure out how to use any Puppet Forge module with Satellite 6.
 
@@ -354,7 +354,7 @@ We use wrote a Puppet module using to create a sudoers file for user `ACME` usin
 
 When developing a puppet modules for use with Satellite 6, you will need to ensure you can access the attribute values of the classes in your module, without touching your puppet code.
 
-Let's revist our puppet class:
+Let's revisit our puppet class:
 
 [source,ruby]
 class foo_sudoers {
@@ -404,15 +404,16 @@ Similar to `Smart Variables`, the difference is `Smart Variables` require you to
 +
 . Overrides for the other parameters can only be done at the host level. Overrides allows specifying a different value for a class parameter at the hostgroup or host level.
 +
-. Smart Variables and Smart Class Parameter can be applied base on rules, for example. User `acme` is allowed to execute `/usr/sbin/service` via sudoers only in the Dev environment, while user `bob` have access in QA and Prod.
+. Smart Variables and Smart Class Parameter supports a feature in Satellite 6 known as Matchers. Matchers allows for setting a different parameter value base on attributes such as, hostgroup and fqdn. Matchers are covered in Section 4.
 
 === Satellite 6 Smart Variables
 
 Smart variables are a stepping stone to to Smart Class Parameters. To make our puppet class compatible with Smart Variables we need to change all the hard coded parameter values into variables.
 
-Change all the parameter values into variables
+Change all the parameter values into variables.
+
 [source,ruby]
-class foo_sudo {
+class foo_sudoers {
   sudoers::allowed_command{ $sudoers_title:
     command          => $sudoers_command,
     user             => $sudoers_user,
@@ -452,8 +453,6 @@ image::images/smart-variables-fn.png[smart variables final]
 [NOTE]
 ====
 This highlights a major difference between *Smart Variables* and *Smart Class Parameters*. At some point you will have to decide where you want to spend your time creating puppet parameters. Adding the 6 parameters from our Puppet class wasn't so bad, but imagine doing this for a 1000 classes.
-
-Smart Class Parameters requires you to write your puppet code with parameterized classes. The end result is Satellite will always be populated with all the parameters available from your Puppet code. Leaving with only the task of populating the values for each parameter.
 ====
 
 ==== Upload and Test
@@ -470,7 +469,7 @@ $ sed -i 's/0.1.0/0.1.1/' foo_sudoers/metadata.json
 +
 . Add new version to Content view
 +
-. Publish Content view with foo_sudoers module
+. Publish Content view with `foo_sudoers` module
 +
 . Promote Content view
 +
@@ -478,25 +477,23 @@ $ sed -i 's/0.1.0/0.1.1/' foo_sudoers/metadata.json
 
 === Satellite 6 Smart Class Parameter
 
-If I were to hand off foo_sudoers module to a person on my team setting up Satellite 6. I would have to also take the time to document all the parameters that needs to be created via Satellite 6 Smart variable. Otherwise, the person receiving the hand off would have to look at the Puppet code to figure out what parameters are available.
+If I were to hand off `foo_sudoers` module to a person on my team setting up Satellite 6. I would have to also take the time to document all the parameters that needs to be created via Satellite 6 Smart variable. Otherwise, the person receiving the hand off would have to look at the Puppet code to figure out what parameters are available.
 
-Instead, what you should want is for Satellite to tell you what variables are available, this is what’s called a Smart Class Parameter in Satellite 6 and known as parameterized class in Puppet.
+Instead, what you should want is for Satellite to tell you what variables are available, this is what’s called a *Smart Class Parameter* and known as parameterized class in Puppet.
 
-[NOTE]
-====
-Parameterized class support permits detecting, importing, and supplying parameters direct to classes which support it, via the ENC. This requires Puppet 2.6.5 or higher.
-====
+==== Construct A Parameterized Class
 
+Let's modify `foo_sudoers` class to look like this.
 
 [source,ruby]
-class foo_sudoers (
+class foo_sudoers (                                  <1>
   $sudoers_command       = "/usr/sbin/service",
   $sudoers_user          = "acme",
   $sudoers_password      = false,
   $sudoers_require_user  = false,
   $sudoers_title         = "acme",
   $comment               = "Allows access to the service cmd.."
-) {
+) {                                                  <2>
   sudoers::allowed_command{ $sudoers_title:
     command          => $sudoers_command,
     user             => $sudoers_user,
@@ -506,87 +503,53 @@ class foo_sudoers (
   }
 }
 
-What we have here is we took the attribute variables  and enclose them in parenthesis, we refer to this as the parameter list. Which is then followed by curly brace and the puppet code describing resource types, ending with curly brace. A common practice is to define parameters in a separate class, and this class is always named params.
+<1> What we have here is we took the parameter variables and enclose them in parenthesis, and added some default values. We refer to this as the parameter list.
 
-Let’s introduce another puppet construct before we continue, all puppet code lives in a file called a manifest, with the file extention “pp”. To follow the params pattern, we create a manifest called params.pp.
+<2> Which is then followed by curly brace and the puppet code describing resource types, ending with curly brace.
 
-[source,ruby]
-class foo_sudoers::params {
-  $sudoers_command       = "/usr/sbin/service"
-  $sudoers_user          = "acme"
-  $sudoers_password      = false
-  $sudoers_require_user  = false
-  $sudoers_title         = "acme"
-  $comment               = "Allows access to the service cmd.."
-}
+Next, increment metadata.json, build, upload module, then publish, promote content view. Navigate to Puppet classes > `foo_sudoers` > Smart Class Parameter. You should see all parameters populated.
 
-In this block of code, foo_sudo is referred to as your main class.  Your main class always matches the name of your module. The double colon is referred to as a namespace separator. In this example, we set values to the variables, this is referred to as default values. This is good practice, as you can always override the default values via Smart Class Parameter.
+image::images/smart-param.png[Smart Class Param]
 
-Next we create the main class foo_sudoers in a manifest called init.pp, simple put any class declared in init.pp gets executed.
+To change a parameter value, select the parameter, then check the `Override` checkbox.
 
-[source,ruby]
-class foo_sudoers(
-  $sudoers_command       = $foo_sudoers::params::sudoers_command,
-  $sudoers_user          = $foo_sudoers::params::sudoers_user,
-  $sudoers_password      = $foo_sudoers::params::sudoers_password,
-  $sudoers_require_user  = $foo_sudoers::params::sudoers_require_user,
-  $sudoers_title         = $foo_sudoers::params::sudoers_title,
-  $comment               = $foo_sudoers::params::comment
-) inherits foo_sudoers::params {
-  sudoers::allowed_command{ $sudoers_title:
-    command          => $sudoers_command,
-    user             => $sudoers_user,
-    require_password => $sudoers_password,
-    require_exist    => $sudoers_require_user,
-    comment          => $comment
-  }
-}
+image::images/override.png[Override Checkbox]
 
-=== Smart varaibels and Smart Parameter Info
 
-. Puppet Environments / Parameter
+=== More About Smart variables and Smart Class Parameter
+
+Both Smart variables and Smart Class Parameter provides some additional attributes, here are some additional notes on the available attributes.
+
+* *Puppet Environments*: Just information, telling you which content view this class lives in
+* *Description*:
+Purely information text box for making notes in. Not passed to Puppet, or reused anywhere else
+* *Override (important)*: If this is unchecked, Satellite 6 will not attempt to control this variable, and it will not be passed to Puppet via the ENC. *This does not apply to Smart variables*.
+* *Key type*: Data type, string, hash, yaml, json etc..
+* *Default Value*: Recommend practice is to set sensible default values.
+* *Optional input validator*: Use to restrict the allowed values for the parameter For example, to restrict sudoers_user parameter to either bob or tom.
 +
-- These can’t be edited, they’re just for information.
+image::images/validator.png[Input Validator]
 +
-. Description
-- Purely information textbox for making notes in. Not passed to Puppet, or reused anywhere else
-+
-. Override (important)
-- If this is unchecked, Foreman will not attempt to control this variable, and it will not be passed to Puppet via the ENC.
-+
-. Key type
-+
-- The type of data we want to pass. Most commonly a string, but many other data types are supported. There’s no easy way to tell what type of data Puppet is expecting, so you will need to read through the code/documentation that comes with a particular module to find out. Changing the type field requires an appropriately set “Default Value” field.
-+
-. Default Value
-+
-- This will be imported from Puppet initially, but if Puppet is using any class inheritance, you’ll get something unhelpful like “${$foreman::params::user}”. This is because Foreman won’t follow the inheritance, so you’ll need to set a sensible default value
+Optional input validator enforces on Puppet Classe and Host level
+* *Override value for specific hosts*: This is covered next.
 
-Default value
+=== Matchers
 
-Most importantly, the Override option has to be enabled for Foreman to control this variable, otherwise it will never be managed and will not appear in the ENC output.
+Satellite Matchers allows for setting different paramter value base on the following attributes.
 
-The Default value will be supplied in the ENC output and should be a supported value, such as a string, YAML or JSON structure or use template features (see following sections). When the Use Puppet default checkbox is enabled, no default value will be present in the ENC output unless an override matches. Puppet will instead use the class default or data binding (Hiera) as usual.
+image::images/matcher.png[Matchers]
 
-The default will be imported from the Puppet manifest initially, but if the class uses an inherited params pattern, it may contain an unhelpful string such as ${$foreman::params::user}. Foreman is unable to parse the actual value in this case as it might change when evaluated. Change the suggested default to the actual value, or tick the Use Puppet default checkbox.
+Let’s say for the class paramater `sudoers_user` should have the value of *bob* for any machine in the `development` instead of the default value acme. Add “environment” to the end of the matchers list, then click the “New Matcher-Value” button, and fill it out like this:
 
-=== Using Smart variables and Smart Parameter Matchers
+image::images/matcher-user.png[Matcher Example]
 
-Suppose I have three users, the owner for Dev = bob, QA = bill and Prod = jim. I want to ensure only the environment owner can execute `/usr/sbin/service`. We can setup a Matcher.
+The order in which matchers keys are processed, first match wins.
+You may use multiple attributes as a matcher key, for example, an order of host group, environment would expect a matcher such as hostgroup = "web servers", environment = production
 
-
-Setting up matchers
-
-We’ve configured the default, but that’s not very useful. We need to be able to override the default for hosts or groups of hosts. To do that we need the “Override Value For Specific Hosts” section at the bottom of the page.
-
-Let’s say that any machine in the “development” Puppet environment should use a value of “foremandev” instead of “foreman” for the “user” parameter. Add “environment” to the end of the matchers list, then click the “New Matcher-Value” button, and fill it out like this:
-
-4.2.6 Smart Matchers
-The same smart matching technology underpins both smart variables and smart class parameters, so is described below. It provides the following features for each parameter:
 
 . A default value that can be sent if no specific match is found.
 +
-. An order of precendence for overrides, based on host attributes or facts.
+. An order of precedence for overrides, based on host attributes or facts.
 +
 . A list of overrides (matchers).
 +
@@ -632,62 +595,3 @@ value: jim
 Simple put, Matchers are a way to central do overrides. If I only had three host, one per environment. I could set a default value for `sudoers_user` *Smart Variable*, then override the value at the host level. In the end, doing it this way still creates a override.
 
 === Summary
-What’s going on here, we are still defining parameters inside parentheses, the difference is we reference the params class for the values. Next addition is the “inherits” keyword, which simple exposes attributes from one class to another. Now foo_sudoers will have access to all the variable values defined in the params class.
-
-  .Explanation
-  - sudoers::allowed_command is called a resource type
-  - acme is the title of the resource - /etc/sudoers.d/<resource-title>
-  - command, user, require_password, comment are all attributes
-  - command, user, require_password, comment are all attributes
-
-[TIP]
-my tips
-
-
-
-
-----
-This is an example of a _listing block_.
-The content inside is rendered as <pre> text.
-- dddeeeee
-----
-
-
-[NOTE]
-====
-This is an example of an admonition block.
-
-Unlike an admonition paragraph, it may contain any AsciiDoc content.
-The style can be any one of the admonition labels:
-
-* NOTE
-* TIP
-* WARNING
-* CAUTION
-* IMPORTANT
-====
-
-[source,ruby]
-----
-require 'asciidoctor'  # <1>
-
-puts Asciidoctor.convert_file('sample.adoc', :header_footer => true)  # <2>
-----
-<1> Imports the library
-<2> Reads, parses and renders the file
-
-.TODO list
-- Learn the AsciiDoc syntax
-- Install AsciiDoc
-- Write my document in AsciiDoc
-
-[sidebar]
-.Related information
---
-This is aside text.
-
-It is used to present information related to the main content.
---
-
-[listing]
-sudo yum install asciidoc
